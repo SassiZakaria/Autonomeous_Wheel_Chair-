@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+import rospy
+import time
+from std_msgs.msg import String
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+angY = 0.0
+angZ = 0.0
+linX = 0.0
+def calculate_LRF(a, b, c):
+    L = 1 if (a * c + c * b * a) == 1 else 0
+    R = 1 if (c * a) == 1 else 0
+    F = 1 if (c * b * a + c * b * a) == 1 else 0
+    T = 1 if (a * b * c) == 1 else 0
+    return L, R, F, T
+def check_ranges(laser):
+    a = 0.2 < laser.ranges[0] < 0.5
+    b = 0.2 < laser.ranges[1] < 0.7
+    c = 0.2 < laser.ranges[2] < 0.5
+    return a, b, c
+def laserScanCallback(laser):
+    global angY, angZ, linX
+
+    a, b, c = check_ranges(laser)
+    L, R, F, T = calculate_LRF(a, b, c)
+    if L == 1:
+        rospy.loginfo("TURN LEFT")
+        linX = 0.0
+        angZ = -1.0
+        
+    if R == 1:
+        rospy.loginfo("TURN RIGHT")
+        linX = 0.0
+        angZ = 1.0
+    
+    if F == 1:
+        rospy.loginfo("GO STRAIGHT")
+        linX = 0.3
+        angY = 0.0
+        angZ = 0.0
+    if T == 1:
+        rospy.loginfo("TURN TURN")
+        linX = 0.0
+        angZ = -1.0
+      
+if __name__ == "__main__":
+    rospy.init_node("hLaserReader")
+    hokuyoSubscriber = rospy.Subscriber("/m2wr/laser/scan", LaserScan, laserScanCallback)
+    pubVelocity = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+    rate = rospy.Rate(10)
+    linX = 0.0
+    angY = 0.0
+    angZ = 0.0
+    while not rospy.is_shutdown():
+        msg = Twist()
+        msg.linear.x = linX
+        msg.angular.y = angY
+        msg.angular.z = angZ
+        pubVelocity.publish(msg)
+        rate.sleep()
