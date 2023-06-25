@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import rospy
 from nav_msgs.msg import Odometry
@@ -8,75 +8,125 @@ from math import cos, sin, atan
 from numpy import sign
 import time
 
-delta_t_w = 2
-delta_t_v = 10
-is_first_step_completed = False
-is_second_step_completed = False
-goals = []  # List to store the goals
+class Goal:
+    def __init__(self, x, y, theta):
+        self.x = x
+        self.y = y
+        self.theta = theta
 
-def odom_callback(odom):
-    ask_and_generate(odom, CommandPublisher, goal)
+class RobotController:
+    def __init__(self):
+        rospy.init_node("inverse_kinematics")
+        self.CommandPublisher = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.OdomSubscriber = rospy.Subscriber("/odom", Odometry, self.odom_callback)
+        self.goals = []
+        self.current_goal_index = 0
 
-def ask_and_generate(odom, CommandPublisher, goal):
-    global is_first_step_completed
+    def odom_callback(self, odom):
+        if self.current_goal_index < len(self.goals):
+            self.ask_and_generate(odom, self.goals[self.current_goal_index])
+            self.current_goal_index += 1
 
-    x_0 = odom.pose.pose.position.x
-    y_0 = odom.pose.pose.position.y
+            # Unsubscribe from /odom topic after reaching a goal
+            self.OdomSubscriber.unregister()
 
-    orientation_quat = (
-        odom.pose.pose.orientation.x,
-        odom.pose.pose.orientation.y,
-        odom.pose.pose.orientation.z,
-        odom.pose.pose.orientation.w
-    )
-    roll, pitch, yaw = euler_from_quaternion(orientation_quat)
-    theta_0 = yaw
-    l=sign((goal[1] - y_0))
-    theta_g1 = atan((goal[1] - y_0) / (goal[0] - x_0))
-    if (goal[0]-x_0)<0.2:
-        w1 = (l*theta_g1 - theta_0) / delta_t_w
-    else:
-        w1 = (theta_g1 - theta_0) / delta_t_w
-    if x_0 == goal[0]:
-        v = abs((goal[1] - y_0) / (delta_t_v * sin(theta_g1)))
-    else:
-        v = abs((goal[0] - x_0) / (delta_t_v * cos(theta_g1)))
-    # 1st step
-    msg = Twist()
-    msg.linear.x = 0.0
-    msg.angular.z = w1
-    CommandPublisher.publish(msg)
+            # Subscribe to /odom topic again if there are more goals
+            if self.current_goal_index < len(self.goals):
+                self.OdomSubscriber = rospy.Subscriber("/odom", Odometry, self.odom_callback)
 
-    time.sleep(delta_t_w)
+    def ask_and_generate(self, odom, goal):
+        delta_t_w = 3
+        delta_t_v = 10
 
-    msg.linear.x = 0.0
-    msg.angular.z = 0.0
-    CommandPublisher.publish(msg)
+        x_0 = odom.pose.pose.position.x
+        y_0 = odom.pose.pose.position.y
 
-    time.sleep(2)
+        orientation_quat = (
+            odom.pose.pose.orientation.x,
+            odom.pose.pose.orientation.y,
+            odom.pose.pose.orientation.z,
+            odom.pose.pose.orientation.w
+        )
+        roll, pitch, yaw = euler_from_quaternion(orientation_quat)
+        theta_0 = yaw
 
-    # 2nd step 
-    msg = Twist()
-    msg.linear.x = v
-    msg.angular.z = 0.0
-    CommandPublisher.publish(msg)
+        # voire l'etat du yaw
+        if yaw < 0:
+            theta_0 = yaw
+        else:
+            theta_0 = -yaw
 
-    time.sleep(delta_t_v)
+        if abs(goal.x - x_0) < 0.001:
+            theta_g = 1.57
+        else:
+            if abs(goal.y - y_0) < 0.001:
+                theta_g = 0
+            else:
+                theta_g = atan((goal.y - y_0) / (goal.x - x_0))
 
-    msg.linear.x = 0.0
-    msg.angular.z = 0.0
-    CommandPublisher.publish(msg)
+        w1 = (theta_g - theta_0) / delta_t_w
 
-    is_first_step_completed = True
+        print('theta_g=%f' % (theta_g * 180 / 3.14))
 
-def odom_callback2(odom):
-    ask_and_generate2(odom, CommandPublisher, goal)
+        w1 = (theta_g - theta_0) / delta_t_w
+        print('w1 = %f' % w1)
+        if theta_g == 1.57:
+            v = (goal.y - y_0) / delta_t_v
+        else:
+            if (theta_g==0):
+             v = (goal.x - x_0) / (delta_t_v * cos(theta_g))
+            else:
+                if abs(x_0 - goal.x) < 0.2:
+                  v = (goal.y - y_0) / (delta_t_v * sin(theta_g))
+                else:
+                  v = (goal.x - x_0) / (delta_t_v * cos(theta_g))
 
-def ask_and_generate2(odom, CommandPublisher, goal):
-    global is_second_step_completed
+        # voire la vitesse et recalculer
+        if v < 0:
+            theta_g = theta_g - 3.14
 
-    if is_first_step_completed and not is_second_step_completed:
-        # 3rd step 
+        print('theta_g=%f' % (theta_g * 180 / 3.14))
+        w1 = (theta_g - theta_0) / delta_t_w
+        print('w1 = %f' % w1)
+        print('v = %f' % v)
+        if theta_g == 1.57:
+            v = (goal.y - y_0) / delta_t_v
+        else:
+            if (theta_g==0):
+             v = (goal.x - x_0) / (delta_t_v * cos(theta_g))
+            else:
+                if abs(x_0 - goal.x) < 0.2:
+                  v = (goal.y - y_0) / (delta_t_v * sin(theta_g))
+                else:
+                  v = (goal.x - x_0) / (delta_t_v * cos(theta_g))
+
+        # 1st step
+        msg = Twist()
+        msg.linear.x = 0
+        msg.angular.z = w1
+        self.CommandPublisher.publish(msg)
+
+        time.sleep(delta_t_w)
+
+        msg.linear.x = 0
+        msg.angular.z = 0
+        self.CommandPublisher.publish(msg)
+
+        time.sleep(0.5)
+
+        # 2nd step
+        msg = Twist()
+        msg.linear.x = v
+        msg.angular.z = 0
+        self.CommandPublisher.publish(msg)
+
+        time.sleep(delta_t_v)
+
+        msg.linear.x = 0
+        msg.angular.z = 0
+        self.CommandPublisher.publish(msg)
+
+        # 3rd step
         orientation_quat2 = (
             odom.pose.pose.orientation.x,
             odom.pose.pose.orientation.y,
@@ -85,48 +135,35 @@ def ask_and_generate2(odom, CommandPublisher, goal):
         )
         roll, pitch, yaw = euler_from_quaternion(orientation_quat2)
         theta_02 = yaw
+        w2 = (goal.theta - theta_02) / delta_t_w
 
-
-        w2 = (goal[2] - theta_02) / delta_t_w
         msg = Twist()
-        msg.linear.x = 0.0
+        msg.linear.x = 0
         msg.angular.z = w2
-        CommandPublisher.publish(msg)
+        self.CommandPublisher.publish(msg)
 
         time.sleep(delta_t_w)
 
-        msg.linear.x = 0.0
-        msg.angular.z = 0.0
-        CommandPublisher.publish(msg)
+        msg.linear.x = 0
+        msg.angular.z = 0
+        self.CommandPublisher.publish(msg)
 
-        is_second_step_completed = True
+        rospy.loginfo("Position précédente x=%f, y=%f, theta=%f", x_0, y_0, yaw)
+
+    def run(self):
+        self.goals = [
+            Goal(0, 13, -1.57),
+            Goal(3.66, 7.78, -1.57),
+            Goal(4.9, 2.16, -1.57),
+            Goal(4.8, -4, -1.57),
+            Goal(4.9, -8.6, -3.14),
+            Goal(2.88, -8.6, -3),
+            Goal(2.8, -9.7, -3),
+            Goal(2.8, -10.92, -3),
+        ]
+
+        rospy.spin()
 
 if __name__ == "__main__":
-    rospy.init_node("inverse_kinematics")
-    CommandPublisher = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
-
-    num_goals = int(input("Enter the number of goals: "))
-    for _ in range(num_goals):
-        x_g = float(input("Enter the goal x-coordinate: "))
-        y_g = float(input("Enter the goal y-coordinate: "))
-        theta_g = float(input("Enter the goal orientation: "))
-        goals.append((x_g, y_g, theta_g))
-    for goal in goals:
-        x_g, y_g, theta_g = goal
-        is_first_step_completed = False
-        is_second_step_completed = False
-
-        OdomSubscriber = rospy.Subscriber("/odom", Odometry, odom_callback)
-        while not is_first_step_completed:
-            # Waiting for the first step to complete
-            pass
-        OdomSubscriber.unregister()  # Unsubscribe from "/odom" topic
-
-        OdomSubscriber2 = rospy.Subscriber("/odom", Odometry, odom_callback2)
-        while not is_second_step_completed:
-            # Waiting for the second step to complete
-            pass
-        OdomSubscriber2.unregister()  # Unsubscribe from "/odom" topic
-    if is_first_step_completed and is_second_step_completed:
-            rospy.signal_shutdown("Movement completed.")
-    rospy.spin()
+    controller = RobotController()
+    controller.run()
